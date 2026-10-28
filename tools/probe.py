@@ -180,15 +180,48 @@ def report(url, status, final, headers, html, chain):
     return "\n".join(out)
 
 
+def show(html, patterns, ctx):
+    """Print raw HTML around each regex match, so small exact snippets can be shared."""
+    for pat in patterns:
+        print(f"\n##### {pat}")
+        n = 0
+        for m in re.finditer(pat, html, re.S | re.I):
+            n += 1
+            a, b = max(0, m.start() - ctx), min(len(html), m.end() + ctx)
+            print(f"--- match {n} @ {m.start()}")
+            print(html[a:b])
+            if n >= 3:
+                print("... (more matches, showing first 3)")
+                break
+        if n == 0:
+            print("(no match)")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("url")
+    ap.add_argument("url", nargs="?", help="page to fetch (not needed with --html)")
     ap.add_argument("--cookie")
     ap.add_argument("--referer")
     ap.add_argument("--out", default="probe-out")
     ap.add_argument("--timeout", type=int, default=90, help="seconds per network step")
     ap.add_argument("--retries", type=int, default=4)
+    ap.add_argument("--html", help="analyze a saved HTML file instead of fetching (no data used)")
+    ap.add_argument("--show", action="append", default=[], metavar="REGEX",
+                    help="print raw HTML around each match; repeatable; skips the full report")
+    ap.add_argument("--ctx", type=int, default=250, help="chars of context for --show")
     a = ap.parse_args()
+
+    if a.html:
+        from email.message import Message
+        html = Path(a.html).read_text(encoding="utf-8", errors="replace")
+        status, final, headers, chain = 0, a.url or a.html, Message(), []
+        if a.show:
+            show(html, a.show, a.ctx)
+            return
+        print(report(final, status, final, headers, html, chain))
+        return
+    if not a.url:
+        ap.error("give a URL or --html FILE")
 
     status, final, headers, html, chain = fetch(
         a.url, a.cookie, a.referer, a.timeout, a.retries)

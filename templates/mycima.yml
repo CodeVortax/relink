@@ -1,0 +1,56 @@
+# DRAFT template: cima.my-cima.net (MyCima)
+# Built by hand from tools/probe.py output of one episode page.
+# Status: watch-page parts are known; the download-servers page is NOT yet studied.
+# Items marked TODO need the raw HTML (use: probe.py --html FILE --show 'REGEX').
+
+name: mycima
+match: '^https?://cima\.my-cima\.net/(?:play|watch|downloads)\.php\?vid=(?P<vid>\w+)'
+
+# Plain urllib with a mobile Chrome User-Agent got a normal 200 page; curl got a
+# Cloudflare "Just a moment" challenge. If a challenge appears, pass the browser's
+# cf_clearance cookie (probe.py --cookie "cf_clearance=...").
+request:
+  headers:
+    User-Agent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+    Accept-Language: "en-US,en;q=0.8,ar;q=0.6"
+  retries: 6          # connection is flaky: "Connection refused" then works on retry
+  timeout: 120
+
+# The same episode id works on all three pages.
+pages:
+  watch:     "https://cima.my-cima.net/watch.php?vid={vid}"      # canonical episode page
+  play:      "https://cima.my-cima.net/play.php?vid={vid}"       # player + watch servers
+  downloads: "https://cima.my-cima.net/downloads.php?vid={vid}"  # download servers (TODO: study)
+
+episode:
+  title: {regex: '<title>(.*?)</title>'}
+  # Page also carries: var pm_video_data = { uniq_id: "...", duration: 2506, ... }
+  duration_s: {regex: 'duration:\s*(\d+)'}
+  # Prev/next links are plain anchors labelled "الحلقة السابقة N" / "الحلقة التالية N".
+  # TODO: exact regex once we see the raw anchor HTML.
+  next: {regex: 'TODO', note: 'href is watch.php?vid=<id>'}
+  prev: {regex: 'TODO', note: 'href is watch.php?vid=<id>'}
+
+# Watch servers: one <li> per server, embed URL inside data-embed (single-quoted iframe src).
+# Seen for one episode: vipserver(liiivideo), vkvideo, mixdrop, vidmoly, abstream,
+# minochinos, hgcloud, bysebuho.
+watch_servers:
+  list: {regex: 'id="server_(?P<name>\w+)"\s+data-embed="<iframe src=''(?P<embed>[^'']+)'''}
+  note: "embed pages are third-party hosts; each needs its own extractor (or yt-dlp)"
+
+# Season/episode list: season tabs (Season0..Season6, newest season first) and one
+# episode list per season, anchors to watch.php?vid=<id> labelled "الحلقة N".
+# The active tab on this page was Season4, which matched season 3 of 7.
+series:
+  seasons_tabs: {regex: 'openCity\(event, ''(?P<tab>Season\d+)''\)'}
+  episode_links: {regex: 'href="[^"]*watch\.php\?vid=(?P<vid>\w+)"[^>]*>\s*(?:<[^>]+>\s*)*الحلقة\s*(?P<num>\d+)'}   # TODO: confirm against raw HTML
+  note: "one season's list is inside its tab's block; group links by that block"
+
+# What we want most (user prefers download servers: more resolutions, easier to extract).
+download_servers:
+  todo: "run probe.py on downloads.php?vid={vid}, then fill: server names, quality labels,
+         and how each button turns into a direct file link (token / redirect / form)"
+
+ignore:
+  - 'openLink()'   # random pop-up ad links
+  - 'popup_shown'  # ad cookie
