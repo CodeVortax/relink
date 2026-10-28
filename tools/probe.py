@@ -35,7 +35,47 @@ class Tracker(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch(url, cookie=None, referer=None):
+def read_body(resp):
+    """Read in chunks; on a stall keep what arrived instead of losing it all."""
+    enc = (resp.headers.get("Content-Encoding") or "").lower()
+    dec = None
+    if enc == "gzip":
+        dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif enc == "deflate":
+        dec = zlib.decompressobj()
+    parts, partial = [], False
+    while True:
+        try:
+            chunk = resp.read(8192)
+        except (TimeoutError, OSError) as e:
+            print(f"warn: read stalled ({e}); keeping partial page", file=sys.stderr)
+            partial = True
+            break
+        if not chunk:
+            break
+        try:
+            parts.append(dec.decompress(chunk) if dec else chunk)
+        except zlib.error:
+            partial = True
+            break
+    return b"".join(parts), partial
+
+
+def fetch(url, cookie=None, referer=None, timeout=90, retries=4):
+    import time
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            return _fetch_once(url, cookie, referer, timeout)
+        except Exception as e:
+            last = e
+            wait = 3 * attempt
+            print(f"attempt {attempt}/{retries} failed: {e}; retry in {wait}s", file=sys.stderr)
+            time.sleep(wait)
+    raise last
+
+
+def _fetch_once(url, cookie=None, referer=None, timeout=90):
     tracker = Tracker()
     opener = build_opener(tracker)
     headers = {
@@ -50,19 +90,16 @@ def fetch(url, cookie=None, referer=None):
         headers["Referer"] = referer
     req = Request(url, headers=headers)
     try:
-        resp = opener.open(req, timeout=30)
+        resp = opener.open(req, timeout=timeout)
         status = resp.status
     except Exception as e:  # HTTPError still has a body worth seeing
         resp = getattr(e, "fp", None) and e
         if resp is None:
             raise
         status = e.code
-    raw = resp.read()
-    enc = (resp.headers.get("Content-Encoding") or "").lower()
-    if enc == "gzip":
-        raw = gzip.decompress(raw)
-    elif enc == "deflate":
-        raw = zlib.decompress(raw)
+    raw, partial = read_body(resp)
+    if partial:
+        print("warn: page is incomplete", file=sys.stderr)
     charset = resp.headers.get_content_charset() or "utf-8"
     text = raw.decode(charset, errors="replace")
     return status, resp.geturl(), resp.headers, text, tracker.chain
@@ -149,9 +186,12 @@ def main():
     ap.add_argument("--cookie")
     ap.add_argument("--referer")
     ap.add_argument("--out", default="probe-out")
+    ap.add_argument("--timeout", type=int, default=90, help="seconds per network step")
+    ap.add_argument("--retries", type=int, default=4)
     a = ap.parse_args()
 
-    status, final, headers, html, chain = fetch(a.url, a.cookie, a.referer)
+    status, final, headers, html, chain = fetch(
+        a.url, a.cookie, a.referer, a.timeout, a.retries)
     rep = report(a.url, status, final, headers, html, chain)
 
     out = Path(a.out)
