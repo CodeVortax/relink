@@ -142,8 +142,10 @@ def report(url, status, final, headers, html, chain):
         w("  " + clean(m.group(0), 300))
 
     w("\n== FORMS ==")
-    for m in re.finditer(r"<form\b[^>]*>", html, re.I):
-        w("  " + clean(m.group(0), 300))
+    for m in re.finditer(r"(<form\b[^>]*>)(.*?)(?:</form>|\Z)", html, re.I | re.S):
+        w("  " + clean(m.group(1), 300))
+        for f in re.finditer(r"<(?:input|button|textarea|select)\b[^>]*>", m.group(2), re.I):
+            w("      " + clean(f.group(0), 200))
 
     w("\n== SCRIPT SRC ==")
     for m in re.finditer(r"<script\b[^>]*\bsrc=[\"']([^\"']+)", html, re.I):

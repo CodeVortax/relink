@@ -58,9 +58,9 @@ series:
 #   bysebuho   embed  https://bysebuho.com/e/{code}                      -> download https://bysebuho.com/d/{code}
 #   vkvideo, vidmoly: no download link on the downloads page
 download_servers:
-  list: {regex: 'TODO: anchor HTML of each download link (labels, quality text)'}
-  host_pages: "TODO: each host's /d/ page is the next hop (waiting page, token or form?).
-               Study one first, vipserver is the first server on the list."
+  # Block <div id="pm-download"><ul class="downloadlist"> with one <li> per host.
+  list: {regex: '<a rel="nofollow" href="(?P<url>[^"]+)" target="_blank">\s*<span>.*?</span>\s*<strong>(?P<name>[^<]+)</strong>', flags: [dotall]}
+  host_pages: "each host's /d/ page is the next hop, see the hosts: section"
 
 # --- Using the site as a small API: search, browse, find -----------------------------
 # Domain rotates: root redirects cima.my-cima.net -> /1unj -> w7.my-cima.net/1unj/ -> back to
@@ -76,7 +76,12 @@ search:
   page: {method: GET,  url: "{base}/search.php", params: {keywords: "{query}"}}   # TODO: result regex
   # Live search used by the site's search box (POST, returns an HTML list; items carry
   # data-video-id and an <a href>). Probably the cheapest on a slow connection.
-  live: {method: POST, url: "{base}/ajax-search.php", form: {queryString: "{query}"}}  # TODO: result regex
+  live: {method: POST, url: "{base}/ajax-search.php", form: {queryString: "{query}"}}
+  # Returns up to 10 <li onClick="fill('TITLE');" data-video-id="ID"> items with an <a href=watch.php?vid=ID>.
+  # Results are EPISODE pages (query "mentalist" returned season 7 episodes 13..4), not series.
+  # Titles look like "مسلسل The Mentalist الموسم السابع الحلقة 13 ... مترجم ماي سيما".
+  live_result: {regex: '<li onClick="fill\(''(?P<title>.*?)''\);" data-video-id="(?P<vid>\w+)"', flags: [dotall]}
+  limit: 10   # so to list a whole series use category.php?cat=<slug> or the season tabs instead
 
 browse:
   latest_episodes: "{base}/episodes.php"
@@ -90,3 +95,21 @@ browse:
 ignore:
   - 'openLink()'   # random pop-up ad links
   - 'popup_shown'  # ad cookie
+
+# --- Download hosts (next hop after downloads.php) ---------------------------------------
+hosts:
+  vipserver:
+    match: '^https://vipserver\.liiivideo\.com/d/(?P<code>\w+)\.html'
+    # Page title "LiiiVideo", looks like an XFileSharing-style host (op=, xupload.js).
+    # It lists qualities as links with the code plus a suffix, size included in the label:
+    #   {code}_h  "HD quality 1280x720, 363.7 MB"
+    #   {code}_l  "Low quality 640x360, 124.6 MB"
+    qualities:
+      hd:  "https://vipserver.liiivideo.com/d/{code}_h"
+      low: "https://vipserver.liiivideo.com/d/{code}_l"
+    next: "TODO: open the _h page: expect a wait timer and/or a form (hidden fields) that yields the direct file link"
+  mixdrop:    {todo: "not studied"}
+  abstream:   {todo: "not studied"}
+  minochinos: {todo: "not studied"}
+  hgcloud:    {todo: "not studied"}
+  bysebuho:   {todo: "not studied"}
