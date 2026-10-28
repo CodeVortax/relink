@@ -47,9 +47,45 @@ series:
   note: "one season's list is inside its tab's block; group links by that block"
 
 # What we want most (user prefers download servers: more resolutions, easier to extract).
+# downloads.php?vid={vid} lists one link per host. The file code in the download link is
+# the SAME code as in the watch embed, only the path changes, so a download page URL can
+# be built straight from a watch server (seen for bb54280c0):
+#   vipserver  embed  https://vipserver.liiivideo.com/embed-{code}.html -> download https://vipserver.liiivideo.com/d/{code}.html
+#   mixdrop    embed  https://mixdrop.top/e/{code}                       -> download https://mixdrop.top/f/{code}
+#   abstream   embed  https://abstream.to/embed/{code}                   -> download https://abstream.to/d/{code}
+#   minochinos embed  https://minochinos.com/embed/{code}                -> download https://minochinos.com/d/{code}
+#   hgcloud    embed  https://hgcloud.to/e/{code}                        -> download https://hgcloud.to/d/{code}
+#   bysebuho   embed  https://bysebuho.com/e/{code}                      -> download https://bysebuho.com/d/{code}
+#   vkvideo, vidmoly: no download link on the downloads page
 download_servers:
-  todo: "run probe.py on downloads.php?vid={vid}, then fill: server names, quality labels,
-         and how each button turns into a direct file link (token / redirect / form)"
+  list: {regex: 'TODO: anchor HTML of each download link (labels, quality text)'}
+  host_pages: "TODO: each host's /d/ page is the next hop (waiting page, token or form?).
+               Study one first, vipserver is the first server on the list."
+
+# --- Using the site as a small API: search, browse, find -----------------------------
+# Domain rotates: root redirects cima.my-cima.net -> /1unj -> w7.my-cima.net/1unj/ -> back to
+# cima.my-cima.net/1unj/, and pages show a "new domain" link (w12.my-cima.net/1unj).
+# So resolve the base by following redirects from the root, do not hardcode it.
+site:
+  root: "https://cima.my-cima.net/"
+  follow_redirects: true
+  note: "when the host changes, re-resolve the base before every job"
+
+search:
+  # Full page search (GET). Result HTML not studied yet.
+  page: {method: GET,  url: "{base}/search.php", params: {keywords: "{query}"}}   # TODO: result regex
+  # Live search used by the site's search box (POST, returns an HTML list; items carry
+  # data-video-id and an <a href>). Probably the cheapest on a slow connection.
+  live: {method: POST, url: "{base}/ajax-search.php", form: {queryString: "{query}"}}  # TODO: result regex
+
+browse:
+  latest_episodes: "{base}/episodes.php"
+  most_watched:    "{base}/topvideos.php"
+  category:        "{base}/category.php?cat={slug}"   # e.g. the-mentalist-s03-mycima
+  tag:             "{base}/tag.php?t={slug}"          # e.g. the-mentalist-season-3
+  note: "home page carousels list items as watch.php?vid=<id>; card labels carry quality
+         ribbons (WEB-DL, CAMRip, HDCam), 'dubbed', 'complete' and an adults-only marker"
+  # Titles: series use 'الموسم N <name>' and episodes 'الحلقة N'.
 
 ignore:
   - 'openLink()'   # random pop-up ad links

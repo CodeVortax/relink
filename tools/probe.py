@@ -61,12 +61,12 @@ def read_body(resp):
     return b"".join(parts), partial
 
 
-def fetch(url, cookie=None, referer=None, timeout=90, retries=4):
+def fetch(url, cookie=None, referer=None, timeout=90, retries=4, data=None, extra=None):
     import time
     last = None
     for attempt in range(1, retries + 1):
         try:
-            return _fetch_once(url, cookie, referer, timeout)
+            return _fetch_once(url, cookie, referer, timeout, data, extra)
         except Exception as e:
             last = e
             wait = 3 * attempt
@@ -75,7 +75,7 @@ def fetch(url, cookie=None, referer=None, timeout=90, retries=4):
     raise last
 
 
-def _fetch_once(url, cookie=None, referer=None, timeout=90):
+def _fetch_once(url, cookie=None, referer=None, timeout=90, data=None, extra=None):
     tracker = Tracker()
     opener = build_opener(tracker)
     headers = {
@@ -88,7 +88,15 @@ def _fetch_once(url, cookie=None, referer=None, timeout=90):
         headers["Cookie"] = cookie
     if referer:
         headers["Referer"] = referer
-    req = Request(url, headers=headers)
+    for h in extra or []:
+        k, _, v = h.partition(":")
+        headers[k.strip()] = v.strip()
+    body = None
+    if data is not None:
+        body = data.encode("utf-8")
+        headers.setdefault("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        headers.setdefault("X-Requested-With", "XMLHttpRequest")
+    req = Request(url, data=body, headers=headers)
     try:
         resp = opener.open(req, timeout=timeout)
         status = resp.status
@@ -205,6 +213,9 @@ def main():
     ap.add_argument("--out", default="probe-out")
     ap.add_argument("--timeout", type=int, default=90, help="seconds per network step")
     ap.add_argument("--retries", type=int, default=4)
+    ap.add_argument("--data", help='POST body, e.g. "queryString=mentalist" (sends a POST)')
+    ap.add_argument("--header", action="append", default=[], metavar="'Name: value'",
+                    help="extra request header; repeatable")
     ap.add_argument("--html", help="analyze a saved HTML file instead of fetching (no data used)")
     ap.add_argument("--show", action="append", default=[], metavar="REGEX",
                     help="print raw HTML around each match; repeatable; skips the full report")
@@ -224,7 +235,7 @@ def main():
         ap.error("give a URL or --html FILE")
 
     status, final, headers, html, chain = fetch(
-        a.url, a.cookie, a.referer, a.timeout, a.retries)
+        a.url, a.cookie, a.referer, a.timeout, a.retries, a.data, a.header)
     rep = report(a.url, status, final, headers, html, chain)
 
     out = Path(a.out)
