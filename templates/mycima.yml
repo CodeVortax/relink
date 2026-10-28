@@ -107,7 +107,15 @@ hosts:
     qualities:
       hd:  "https://vipserver.liiivideo.com/d/{code}_h"
       low: "https://vipserver.liiivideo.com/d/{code}_l"
-    next: "TODO: open the _h page: expect a wait timer and/or a form (hidden fields) that yields the direct file link"
+    # The {code}_h page has no timer in the HTML; it holds one POST form (id F1, action "" = same URL):
+    #   hidden fields: op=download_orig, id={code}, mode=h (l for low), hash=<time-stamped, per page load>
+    # The hash is minted on each page load, so fetch the page and POST in the same run, same cookies.
+    form:
+      page: "https://vipserver.liiivideo.com/d/{code}_{mode}"
+      method: POST
+      fields_from: 'form#F1 hidden inputs'
+      referer: "{page}"
+    next: "TODO: the POST reply should contain the direct file link (confirm with probe.py --submit-form)"
   mixdrop:    {todo: "not studied"}
   abstream:   {todo: "not studied"}
   minochinos: {todo: "not studied"}

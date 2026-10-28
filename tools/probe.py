@@ -14,7 +14,11 @@ import zlib
 from html import unescape
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from http.cookiejar import CookieJar
+from urllib.parse import urlencode
+from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener
+
+JAR = CookieJar()
 
 UA = ("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
@@ -77,7 +81,7 @@ def fetch(url, cookie=None, referer=None, timeout=90, retries=4, data=None, extr
 
 def _fetch_once(url, cookie=None, referer=None, timeout=90, data=None, extra=None):
     tracker = Tracker()
-    opener = build_opener(tracker)
+    opener = build_opener(tracker, HTTPCookieProcessor(JAR))
     headers = {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
@@ -158,7 +162,8 @@ def report(url, status, final, headers, html, chain):
             w("  ---")
             w("  " + clean(body, 1200))
 
-    w("\n== LINKS (keyword/Arabic labels) ==")
+    small = len(html) < 6000
+    w("\n== LINKS (keyword/Arabic labels; all links on small pages) ==")
     seen = set()
     for m in re.finditer(r"<a\b([^>]*)>(.*?)</a>", html, re.S | re.I):
         attrs, label = m.group(1), re.sub(r"<[^>]+>", " ", m.group(2))
@@ -166,7 +171,7 @@ def report(url, status, final, headers, html, chain):
         if not hm:
             continue
         href = urljoin(final, hm.group(1))
-        if (KEYWORDS.search(label) or KEYWORDS.search(href)) and href not in seen:
+        if (small or KEYWORDS.search(label) or KEYWORDS.search(href)) and href not in seen:
             seen.add(href)
             w(f"  [{clean(label, 60)}] {href}")
 
@@ -181,6 +186,11 @@ def report(url, status, final, headers, html, chain):
             w("  ...")
             break
 
+    w("\n== MEDIA-LOOKING URLS ==")
+    media = sorted({u for u in re.findall(
+        r"https?://[^\s\"'<>\\]+?\.(?:mp4|m3u8|mkv|webm|mpd|ts)(?:\?[^\s\"'<>\\]*)?", html, re.I)})
+    for u in media[:40]:
+        w("  " + u)
     w("\n== URLS IN PAGE (other hosts) ==")
     host = urlparse(final).netloc
     others = sorted({u for u in re.findall(r"https?://[^\s\"'<>\\)]+", html)
@@ -188,6 +198,22 @@ def report(url, status, final, headers, html, chain):
     for u in others[:80]:
         w("  " + u)
     return "\n".join(out)
+
+
+def first_form_data(html, base):
+    """Return (action_url, urlencoded_body) for the first form that has hidden inputs."""
+    for m in re.finditer(r"(<form\b[^>]*>)(.*?)(?:</form>|\Z)", html, re.I | re.S):
+        inputs = re.findall(r"<input\b[^>]*>", m.group(2), re.I)
+        fields = []
+        for tag in inputs:
+            n = re.search(r"\bname=[\"']([^\"']*)", tag, re.I)
+            v = re.search(r"\bvalue=[\"']([^\"']*)", tag, re.I)
+            if n:
+                fields.append((n.group(1), unescape(v.group(1)) if v else ""))
+        if any(re.search(r"type=[\"']hidden", t, re.I) for t in inputs):
+            act = re.search(r"\baction=[\"']([^\"']*)", m.group(1), re.I)
+            return urljoin(base, unescape(act.group(1)) if act and act.group(1) else base), urlencode(fields)
+    return None, None
 
 
 def show(html, patterns, ctx):
@@ -215,6 +241,8 @@ def main():
     ap.add_argument("--out", default="probe-out")
     ap.add_argument("--timeout", type=int, default=90, help="seconds per network step")
     ap.add_argument("--retries", type=int, default=4)
+    ap.add_argument("--submit-form", action="store_true",
+                    help="after fetching, POST the first form with hidden fields (same cookies, Referer) and report the reply")
     ap.add_argument("--data", help='POST body, e.g. "queryString=mentalist" (sends a POST)')
     ap.add_argument("--header", action="append", default=[], metavar="'Name: value'",
                     help="extra request header; repeatable")
@@ -247,6 +275,20 @@ def main():
     (out / f"{stem}.report.txt").write_text(rep, encoding="utf-8")
     print(rep)
     print(f"\nSaved: {out}/{stem}.html and {out}/{stem}.report.txt", file=sys.stderr)
+
+    if a.submit_form:
+        action, body = first_form_data(html, final)
+        if not action:
+            print("\n(no form with hidden fields found)", file=sys.stderr)
+            return
+        print(f"\n######## SUBMITTING FORM -> {action}\n######## body: {body}\n")
+        st2, fin2, hd2, html2, ch2 = fetch(
+            action, a.cookie, final, a.timeout, a.retries, body, a.header)
+        rep2 = report(action, st2, fin2, hd2, html2, ch2)
+        (out / f"{stem}.post.html").write_text(html2, encoding="utf-8")
+        (out / f"{stem}.post.report.txt").write_text(rep2, encoding="utf-8")
+        print(rep2)
+        print(f"\nSaved: {out}/{stem}.post.html and {out}/{stem}.post.report.txt", file=sys.stderr)
 
 
 if __name__ == "__main__":
