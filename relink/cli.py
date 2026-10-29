@@ -124,7 +124,8 @@ def cmd_search(a):
     if not rows:
         print("no results")
     for r in rows:
-        print(f"{r.get('vid', ''):<10} {r.get('title', '')}\n           {r.get('url', '')}")
+        # the title gets its own line so a right-to-left title is never mixed with the id
+        print(f"{r.get('title', '')}\n    {r.get('url', '')}")
     return 0
 
 
