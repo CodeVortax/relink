@@ -1,2 +1,5 @@
 probe-out/
 __pycache__/
+*.egg-info/
+downloads/
+*.part

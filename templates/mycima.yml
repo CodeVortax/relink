@@ -1,123 +1,101 @@
-# DRAFT template: cima.my-cima.net (MyCima)
-# Built by hand from tools/probe.py output of one episode page.
-# Status: watch-page parts are known; the download-servers page is NOT yet studied.
-# Items marked TODO need the raw HTML (use: probe.py --html FILE --show 'REGEX').
+# Template: cima.my-cima.net (MyCima)
+# Written by hand from tools/probe.py reports (episode bb54280c0, The Mentalist S03E17).
+# Chain proven so far:
+#   play.php?vid=ID  ->  server list (data-embed)  ->  vipserver /d/{code}.html (qualities)
+#   ->  /d/{code}_h  ->  POST form F1  ->  "Direct Download Link" (signed .mp4, ~12 h)
+# See `relink/engine.py` for the step language.
 
 name: mycima
-match: '^https?://cima\.my-cima\.net/(?:play|watch|downloads)\.php\?vid=(?P<vid>\w+)'
+# The domain rotates (root redirects through /1unj and other w*.my-cima.net names), so the
+# match accepts any cima/my-cima host and every step works from the URL you give it.
+match: '^https?://[\w.-]*my-cima\.[a-z]+/(?:play|watch|downloads)\.php\?vid=(?P<vid>\w+)'
 
-# Plain urllib with a mobile Chrome User-Agent got a normal 200 page; curl got a
-# Cloudflare "Just a moment" challenge. If a challenge appears, pass the browser's
-# cf_clearance cookie (probe.py --cookie "cf_clearance=...").
+# Plain urllib with a mobile Chrome User-Agent gets a normal page; bare curl got a
+# Cloudflare "Just a moment" challenge. If a challenge appears: --cookie "cf_clearance=...".
 request:
   headers:
-    User-Agent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     Accept-Language: "en-US,en;q=0.8,ar;q=0.6"
-  retries: 6          # connection is flaky: "Connection refused" then works on retry
-  timeout: 120
+  retries: 6        # the connection is flaky: "Connection refused", then it works
+  timeout: 90
 
-# The same episode id works on all three pages.
-pages:
-  watch:     "https://cima.my-cima.net/watch.php?vid={vid}"      # canonical episode page
-  play:      "https://cima.my-cima.net/play.php?vid={vid}"       # player + watch servers
-  downloads: "https://cima.my-cima.net/downloads.php?vid={vid}"  # download servers (TODO: study)
-
-episode:
-  title: {regex: '<title>(.*?)</title>'}
-  # Page also carries: var pm_video_data = { uniq_id: "...", duration: 2506, ... }
-  duration_s: {regex: 'duration:\s*(\d+)'}
-  # Prev/next links are plain anchors labelled "الحلقة السابقة N" / "الحلقة التالية N".
-  # TODO: exact regex once we see the raw anchor HTML.
-  next: {regex: 'TODO', note: 'href is watch.php?vid=<id>'}
-  prev: {regex: 'TODO', note: 'href is watch.php?vid=<id>'}
-
-# Watch servers: one <li> per server, embed URL inside data-embed (single-quoted iframe src).
-# Seen for one episode: vipserver(liiivideo), vkvideo, mixdrop, vidmoly, abstream,
-# minochinos, hgcloud, bysebuho.
-watch_servers:
-  list: {regex: 'id="server_(?P<name>\w+)"\s+data-embed="<iframe src=''(?P<embed>[^'']+)'''}
-  note: "embed pages are third-party hosts; each needs its own extractor (or yt-dlp)"
-
-# Season/episode list: season tabs (Season0..Season6, newest season first) and one
-# episode list per season, anchors to watch.php?vid=<id> labelled "الحلقة N".
-# The active tab on this page was Season4, which matched season 3 of 7.
-series:
-  seasons_tabs: {regex: 'openCity\(event, ''(?P<tab>Season\d+)''\)'}
-  episode_links: {regex: 'href="[^"]*watch\.php\?vid=(?P<vid>\w+)"[^>]*>\s*(?:<[^>]+>\s*)*الحلقة\s*(?P<num>\d+)'}   # TODO: confirm against raw HTML
-  note: "one season's list is inside its tab's block; group links by that block"
-
-# What we want most (user prefers download servers: more resolutions, easier to extract).
-# downloads.php?vid={vid} lists one link per host. The file code in the download link is
-# the SAME code as in the watch embed, only the path changes, so a download page URL can
-# be built straight from a watch server (seen for bb54280c0):
-#   vipserver  embed  https://vipserver.liiivideo.com/embed-{code}.html -> download https://vipserver.liiivideo.com/d/{code}.html
-#   mixdrop    embed  https://mixdrop.top/e/{code}                       -> download https://mixdrop.top/f/{code}
-#   abstream   embed  https://abstream.to/embed/{code}                   -> download https://abstream.to/d/{code}
-#   minochinos embed  https://minochinos.com/embed/{code}                -> download https://minochinos.com/d/{code}
-#   hgcloud    embed  https://hgcloud.to/e/{code}                        -> download https://hgcloud.to/d/{code}
-#   bysebuho   embed  https://bysebuho.com/e/{code}                      -> download https://bysebuho.com/d/{code}
-#   vkvideo, vidmoly: no download link on the downloads page
-download_servers:
-  # Block <div id="pm-download"><ul class="downloadlist"> with one <li> per host.
-  list: {regex: '<a rel="nofollow" href="(?P<url>[^"]+)" target="_blank">\s*<span>.*?</span>\s*<strong>(?P<name>[^<]+)</strong>', flags: [dotall]}
-  host_pages: "each host's /d/ page is the next hop, see the hosts: section"
-
-# --- Using the site as a small API: search, browse, find -----------------------------
-# Domain rotates: root redirects cima.my-cima.net -> /1unj -> w7.my-cima.net/1unj/ -> back to
-# cima.my-cima.net/1unj/, and pages show a "new domain" link (w12.my-cima.net/1unj).
-# So resolve the base by following redirects from the root, do not hardcode it.
 site:
-  root: "https://cima.my-cima.net/"
-  follow_redirects: true
-  note: "when the host changes, re-resolve the base before every job"
+  root: "https://cima.my-cima.net/"   # followed to find the live domain when searching
 
-search:
-  # Full page search (GET). Result HTML not studied yet.
-  page: {method: GET,  url: "{base}/search.php", params: {keywords: "{query}"}}   # TODO: result regex
-  # Live search used by the site's search box (POST, returns an HTML list; items carry
-  # data-video-id and an <a href>). Probably the cheapest on a slow connection.
-  live: {method: POST, url: "{base}/ajax-search.php", form: {queryString: "{query}"}}
-  # Returns up to 10 <li onClick="fill('TITLE');" data-video-id="ID"> items with an <a href=watch.php?vid=ID>.
-  # Results are EPISODE pages (query "mentalist" returned season 7 episodes 13..4), not series.
-  # Titles look like "مسلسل The Mentalist الموسم السابع الحلقة 13 ... مترجم ماي سيما".
-  live_result: {regex: '<li onClick="fill\(''(?P<title>.*?)''\);" data-video-id="(?P<vid>\w+)"', flags: [dotall]}
-  limit: 10   # so to list a whole series use category.php?cat=<slug> or the season tabs instead
+server_priority: [vipserver]          # the first one that works wins; others are fallbacks
 
-browse:
-  latest_episodes: "{base}/episodes.php"
-  most_watched:    "{base}/topvideos.php"
-  category:        "{base}/category.php?cat={slug}"   # e.g. the-mentalist-s03-mycima
-  tag:             "{base}/tag.php?t={slug}"          # e.g. the-mentalist-season-3
-  note: "home page carousels list items as watch.php?vid=<id>; card labels carry quality
-         ribbons (WEB-DL, CAMRip, HDCam), 'dubbed', 'complete' and an adults-only marker"
-  # Titles: series use 'الموسم N <name>' and episodes 'الحلقة N'.
+# ---- 1. read the episode page ----------------------------------------------------------
+servers:
+  steps:
+    - get: "{origin}/play.php?vid={vid}"
+    - find: {regex: '<title>(?P<title>.*?)</title>', dotall: true, strip: [title], required: false}
+    # one <li id="server_Name" data-embed="<iframe src='EMBED'..."> per watch server.
+    # The attribute may be stored raw or HTML-escaped, so both forms are accepted.
+    - find:
+        regex: 'id="server_(?P<name>\w+)"\s+data-embed=["''](?:<|&lt;)iframe[^>]*?src=(?:''|&#0?39;|&quot;|\\")(?P<embed>https?://.+?)(?:''|&#0?39;|&quot;|\\")'
+        all: true
+        as: servers
 
-ignore:
-  - 'openLink()'   # random pop-up ad links
-  - 'popup_shown'  # ad cookie
-
-# --- Download hosts (next hop after downloads.php) ---------------------------------------
+# ---- 2. per download host: server -> direct file link ---------------------------------
+# Every host needs its own small adapter. Only vipserver is studied so far.
 hosts:
   vipserver:
-    match: '^https://vipserver\.liiivideo\.com/d/(?P<code>\w+)\.html'
-    # Page title "LiiiVideo", looks like an XFileSharing-style host (op=, xupload.js).
-    # It lists qualities as links with the code plus a suffix, size included in the label:
-    #   {code}_h  "HD quality 1280x720, 363.7 MB"
-    #   {code}_l  "Low quality 640x360, 124.6 MB"
-    qualities:
-      hd:  "https://vipserver.liiivideo.com/d/{code}_h"
-      low: "https://vipserver.liiivideo.com/d/{code}_l"
-    # The {code}_h page has no timer in the HTML; it holds one POST form (id F1, action "" = same URL):
-    #   hidden fields: op=download_orig, id={code}, mode=h (l for low), hash=<time-stamped, per page load>
-    # The hash is minted on each page load, so fetch the page and POST in the same run, same cookies.
-    form:
-      page: "https://vipserver.liiivideo.com/d/{code}_{mode}"
-      method: POST
-      fields_from: 'form#F1 hidden inputs'
-      referer: "{page}"
-    next: "TODO: the POST reply should contain the direct file link (confirm with probe.py --submit-form)"
-  mixdrop:    {todo: "not studied"}
-  abstream:   {todo: "not studied"}
-  minochinos: {todo: "not studied"}
-  hgcloud:    {todo: "not studied"}
-  bysebuho:   {todo: "not studied"}
+    steps:
+      # embed https://vipserver.liiivideo.com/embed-{code}.html -> download page /d/{code}.html
+      - find: {from: embed, regex: '/embed-(?P<code>\w+)\.html'}
+      - get: {url: "{embed_origin}/d/{code}.html", referer: "{origin}/downloads.php?vid={vid}"}
+      # qualities are links /d/{code}_h (HD 1280x720) and /d/{code}_l (low 640x360)
+      - find:
+          regex: 'href="[^"]*/d/{code}_(?P<q>\w)(?:\.html)?"[^>]*>(?P<label>.*?)</a>'
+          dotall: true
+          strip: [label]
+          all: true
+          as: qualities
+      - choose:
+          from: qualities
+          key: q
+          as: pick
+          prefer:
+            best: [h, n, l]
+            hd:   [h, n, l]
+            low:  [l, n, h]
+      - get: "{embed_origin}/d/{code}_{pick.q}"
+      # one POST form (id F1, action "" = same URL) with hidden op/id/mode/hash. The hash is
+      # minted on every page load, so the page and the POST must happen together.
+      - form: {}
+      # the reply holds <a href="DIRECT">Direct Download Link</a>; the second find is a
+      # fallback that takes any media-looking URL.
+      - find:
+          regex: '<a\b[^>]*?href="(?P<direct>https?://[^"]+)"[^>]*>(?:\s|<[^>]+>)*Direct Download Link'
+          dotall: true
+          required: false
+      - find:
+          regex: '(?P<direct>https?://[^\s"''<>]+?\.(?:mp4|mkv|m3u8)[^\s"''<>]*)'
+          unless: direct
+    result: "{direct}"
+  # Seen on the downloads page, not studied yet (embed code -> download page is the same
+  # code with a different path):
+  #   mixdrop    https://mixdrop.top/f/{code}         abstream   https://abstream.to/d/{code}
+  #   minochinos https://minochinos.com/d/{code}      hgcloud    https://hgcloud.to/d/{code}
+  #   bysebuho   https://bysebuho.com/d/{code}
+  # vkvideo and vidmoly have no download link.
+
+# ---- 3. search (small API) -------------------------------------------------------------
+# Live search used by the site's box: POST, returns up to 10 EPISODE items (not series).
+search:
+  steps:
+    - post: {url: "{origin}/ajax-search.php", form: {queryString: "{query}"}, ajax: true}
+    - find:
+        regex: '<li onClick="fill\(''(?P<title>.*?)''\);" data-video-id="(?P<vid>\w+)"'
+        dotall: true
+        strip: [title]
+        all: true
+        as: results
+  result_url: "{origin}/watch.php?vid={vid}"
+
+# ---- notes for later --------------------------------------------------------------------
+# Series: season tabs openCity(event,'Season0'..'Season6'), newest season first; every
+#   episode is <a href=".../watch.php?vid=ID">الحلقة N</a> inside its season block.
+#   Prev/next links are labelled "الحلقة السابقة N" / "الحلقة التالية N".
+# Browse: episodes.php, topvideos.php, category.php?cat=SLUG, tag.php?t=SLUG,
+#   search.php?keywords=QUERY (full page; not studied).
+# Ads to ignore: openLink() random pop-ups, the popup_shown cookie.

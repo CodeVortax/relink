@@ -26,58 +26,55 @@ drops, it fetches a fresh link and **continues from where it stopped**.
 
 ## How it works
 
-1. `resolve`: match the URL to a template (or fall back to yt-dlp) and get a direct link.
-2. `download`: aria2c fetches it with resume and multiple connections.
-3. If the link dies, go back to step 1 and resume the partial file.
-4. Job state is saved, so `relink resume` continues everything after a reboot.
+1. A **template** (`templates/<site>.yml`) says how to get from a page to a direct file link:
+   read the page's server list, open the download host, pick a quality, submit the form.
+   Templates are small step lists (`get`, `post`, `form`, `find`, `choose`), see `relink/engine.py`.
+2. The downloader saves to `name.mp4.part` and resumes with HTTP Range.
+3. If the link dies (403/410, a web page instead of the file, a dropped connection) it runs
+   the template again for a fresh link and continues from the same byte.
+4. Job state is saved in `~/.relink/jobs`, so `relink resume` continues after a reboot.
 
-## Tools used
-
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp): generic fallback for many sites
-- [aria2](https://aria2.github.io/): resumable, multi-connection downloads
-- ffmpeg: merging streams
-- Python
+No yt-dlp or aria2 needed so far: only Python and PyYAML.
 
 ## Install (Termux)
 
 ```bash
-pkg install -y python git aria2 ffmpeg
+pkg install -y python git
 git clone https://github.com/CodeVortax/relink
 cd relink
-pip install -e .
+pip install -e .          # installs pyyaml and the `relink` command
 ```
 
 ## Usage
 
 ```bash
-relink get <url>      # download a page or direct link
-relink resume         # continue unfinished downloads
-relink list           # show all jobs
+relink search the mentalist               # small search API (episodes)
+relink servers <episode-url>              # servers on a page and which have an adapter
+relink get <episode-url>                  # best quality, saved to ~/storage/downloads/relink
+relink get <url> --quality low --out ~/storage/downloads
+relink get <url> --dry                    # only print the direct link
+relink list                               # jobs and progress
+relink resume                             # continue unfinished jobs
 ```
 
-## Templates (coming next)
+If a site shows a Cloudflare challenge, pass the browser's cookie: `--cookie "cf_clearance=..."`.
 
-Each supported site gets one small file in `templates/`:
+## Studying a new site
 
-```yaml
-name: example-site
-match: "https?://(www\\.)?example\\.com/watch/.+"
-steps:
-  - fetch: "{url}"
-  - extract: {regex: 'data-src="(.*?)"', as: player}
-  - fetch: "{player}"
-  - extract: {json: "sources.0.file", as: media}
-headers: {Referer: "{url}"}
-result: "{media}"
-```
+`tools/probe.py` fetches one page and prints its structure (iframes, forms with hidden
+fields, scripts, links, media URLs). Useful options: `--html FILE --show REGEX` (offline),
+`--data "a=b"` (POST), `--submit-form` (post the first form and show the reply).
+Then write the steps in `templates/<site>.yml`. `templates/mycima.yml` is the worked example.
 
-## Roadmap
+## Status
 
-- [x] Project skeleton, yt-dlp fallback, aria2 resume
-- [ ] Template engine
-- [ ] Expiry watchdog (detect 403/410 and stalls)
-- [ ] Queue and batch mode
-- [ ] First templates for popular sites
+- [x] Template engine, resumable downloader with automatic link refresh, job state
+- [x] First template: MyCima, episode page to direct link (vipserver host, HD and low)
+- [x] Offline test with a fake site (cut connection, expired link): `python -m unittest discover -s tests`
+- [ ] Prove the chain on the real site (needs a run on a connection that reaches it)
+- [ ] Series mode: all episodes of a season, next-episode following
+- [ ] Adapters for the other hosts (mixdrop, abstream, minochinos, hgcloud, bysebuho)
+- [ ] Site analyzer that drafts a template from a link
 
 ## Notes
 

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relink"
+version = "0.1.0"
+description = "Download from sites that only give temporary links: template-driven, resumable, refreshes dead links."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["pyyaml"]
+
+[project.scripts]
+relink = "relink.cli:main"
+
+[tool.setuptools]
+packages = ["relink"]
