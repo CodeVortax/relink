@@ -33,8 +33,17 @@ EXCLUDE = {
     "amazon.com", "primevideo.com", "disneyplus.com", "hulu.com", "hbomax.com", "max.com",
     "apple.com", "microsoft.com", "pinterest.com", "linkedin.com", "quora.com", "medium.com",
     "github.com", "fandom.com", "tvmaze.com", "trakt.tv", "letterboxd.com", "t.me",
-    "telegram.org", "whatsapp.com", "vimeo.com", "dailymotion.com", "twitch.tv",
+    "telegram.org", "whatsapp.com", "vimeo.com", "dailymotion.com", "twitch.tv", "wa.me",
+    "zhihu.com", "yahoo.co.jp", "zoominfo.com", "rocketreach.co", "brainyquote.com",
+    "goodreads.com", "tumblr.com", "wordpress.com", "blogspot.com", "quora.com", "baidu.com",
+    "yandex.com", "naver.com", "ebay.com", "alibaba.com", "tripadvisor.com", "cnn.com",
+    "bbc.com", "nytimes.com", "variety.com", "deadline.com", "ign.com", "metacritic.com",
 }
+
+# domains that show up in iframes/scripts but are never the video host
+NOISE_HOSTS = ("google", "gstatic", "facebook", "twitter", "youtube", "doubleclick", "cloudflare",
+               "jquery", "bootstrap", "fontawesome", "googletagmanager", "disqus", "gravatar",
+               "wp.com", "w.org", "addthis", "sharethis", "recaptcha", "histats", "yandex")
 
 # file hosts that sites embed; seeing them in a page tells us which adapters matter
 KNOWN_HOSTS = [
@@ -48,6 +57,7 @@ KNOWN_HOSTS = [
 WATCH_RE = re.compile(
     r"watch|episode|season|series|movie|film|/play|/vid|stream|show|anime|"
     r"مسلسل|فيلم|حلقة|الحلقة|موسم|مشاهدة|انمي", re.I)
+EPISODE_RE = re.compile(r"episode|season|\bs\d{1,2}e\d{1,2}\b|\bep-?\d+|حلقة|الحلقة|موسم|الموسم", re.I)
 DOWNLOAD_RE = re.compile(r"download|/dl\b|/d/|get-?link|تحميل|تنزيل", re.I)
 SEARCH_FIELDS = {"s", "q", "query", "search", "keyword", "keywords", "k", "story", "term"}
 PARKED_RE = re.compile(r"domain is for sale|buy this domain|parked|this domain may be for sale"
@@ -122,32 +132,31 @@ def parse_bing(html):
 
 
 def search_engine(client, query, engine="both"):
-    """URLs found for one query. DuckDuckGo first, Bing as fallback (or the other way round)."""
+    """URLs found for one query. With "both", DuckDuckGo and Bing results are merged."""
     order = {"ddg": ["ddg"], "bing": ["bing"], "both": ["ddg", "bing"]}[engine]
     found = []
     for name in order:
         try:
             if name == "ddg":
                 r = client.request("https://html.duckduckgo.com/html/", data="q=" + quote(query))
-                found = parse_ddg(r.text)
+                got = parse_ddg(r.text)
             else:
                 r = client.request("https://www.bing.com/search?q=" + quote(query) + "&count=30")
-                found = parse_bing(r.text)
+                got = parse_bing(r.text)
         except (NetError, Blocked):
-            found = []
-        if found:
-            break
+            got = []
+        found += [u for u in got if u not in found]
     return found
 
 
 def expand_title(title):
-    """One title -> several queries that tend to surface different kinds of sites."""
+    """One title -> queries that surface episode/streaming sites rather than articles."""
     return [
-        f"{title} watch online free",
-        f"{title} download episode",
-        f"{title} مشاهدة مترجم",
-        f"{title} تحميل مباشر",
-        f"{title} مسلسل حلقة",
+        f"{title} season 1 episode 1 watch online -quotes -wiki -imdb",
+        f"{title} S01E01 download -quotes -wiki -imdb",
+        f"{title} الموسم الاول الحلقة 1 مترجم مشاهدة",
+        f"{title} الحلقة 1 تحميل مباشر",
+        f"مسلسل {title} كامل اون لاين",
     ]
 
 
@@ -224,16 +233,19 @@ def classify_links(html, base):
     return watch, dl
 
 
+def known_hosts(html):
+    low = html.lower()
+    return sorted({k.strip(".") for k in KNOWN_HOSTS if k in low})
+
+
 def embed_hosts(html):
     hosts = set()
-    for m in re.finditer(r"(?:src|data-embed|data-src|data-url)\s*=\s*[\"'][^\"']*?(https?:)?//"
-                         r"([\w.-]+\.[a-z]{2,})", html, re.I):
-        hosts.add(m.group(2).lower())
-    low = html.lower()
-    for k in KNOWN_HOSTS:
-        if k in low:
-            hosts.add(k.strip("."))
-    return sorted(hosts)
+    for m in re.finditer(r"(?:<iframe[^>]+src|data-embed|data-iframe)\s*=\s*[\"'][^\"']*?"
+                         r"(?:https?:)?//([\w.-]+\.[a-z]{2,})", html, re.I):
+        h = m.group(1).lower()
+        if not any(n in h for n in NOISE_HOSTS):
+            hosts.add(h)
+    return sorted(hosts | set(known_hosts(html)))
 
 
 def fingerprint(client, origin):
@@ -264,6 +276,8 @@ def fingerprint(client, origin):
         watch_links=len(watch), download_links=len(dl),
         sample_watch=watch[:5], sample_download=dl[:3],
         embeds=embed_hosts(html),
+        video_hosts=known_hosts(html),
+        episode_links=sum(1 for w in watch if EPISODE_RE.search(w["url"] + " " + w["text"])),
         parked=bool(PARKED_RE.search(html[:20000])) or (len(watch) + len(dl) == 0 and len(html) < 3000),
         moved=host_of(r.url) != host_of(origin),
     )
@@ -279,14 +293,19 @@ def family_of(fp):
 
 
 def score(fp):
-    """Rough usefulness: how likely a template gets us from this site to a direct file."""
+    """Rough usefulness: how likely a template gets us from this site to a direct file.
+    Without video evidence (episode-style links or a known video host) a site scores at most 1,
+    so forums, quote sites and directories never make it into the bundle."""
     if not fp.get("ok") or fp.get("parked"):
         return 0
-    s = 0
+    video = bool(fp.get("video_hosts")) or fp.get("episode_links", 0) >= 2
+    if not video:
+        return 1 if fp.get("watch_links") else 0
+    s = 2
     s += 3 if fp.get("search") else 0
-    s += 2 if fp.get("watch_links", 0) >= 3 else (1 if fp.get("watch_links") else 0)
-    s += 2 if fp.get("download_links") else 0
+    s += 1 if fp.get("download_links") else 0
     s += 2 if fp.get("embeds") else 0
+    s += 1 if fp.get("episode_links", 0) >= 5 else 0
     return s
 
 

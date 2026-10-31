@@ -91,6 +91,24 @@ class Parsers(unittest.TestCase):
         self.assertTrue(discover.excluded("https://www.imdb.com/title/tt1"))
         self.assertFalse(discover.excluded("https://cima-club.tv/"))
 
+    def test_forum_and_quote_pages_do_not_score(self):
+        forum = ('<html><title>Forum</title><form action="/s"><input name="q"></form>'
+                 '<a href="/show/1">show</a><a href="/show/2">show</a><a href="/stream/3">stream</a>'
+                 '<a href="/download-app">download app</a></html>')
+
+        class C:
+            def request(self, url, **k):
+                from relink.net import Response
+                import email.message
+                return Response(200, url, email.message.Message(), forum.encode())
+
+        fp = discover.fingerprint(C(), "https://forum.example")
+        self.assertLess(fp["score"], 3)
+
+    def test_noise_hosts_are_not_embeds(self):
+        html = '<iframe src="https://www.google.com/maps"></iframe><iframe src="https://voe.sx/e/1">'
+        self.assertEqual(discover.embed_hosts(html), ["voe.sx"])
+
     def test_expand_title(self):
         qs = discover.expand_title("The Mentalist")
         self.assertEqual(len(qs), 5)
