@@ -3,7 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, jobs
+from . import __version__, discover, generic, jobs
 from .download import DownloadError, download, human
 from .engine import Engine, ResolveError, TemplateError, find_template, load_templates
 from .net import Blocked, Client, NetError
@@ -40,11 +40,31 @@ def pick_dest(out, filename):
     return d / filename
 
 
-def do_get(url, quality="best", server=None, out=None, dry=False, cookie=None, retries=None):
-    tpl = find_template(url, load_templates())
+def do_generic(url, quality, out, dry):
+    """No template for this site: let yt-dlp do it (resumes, retries forever)."""
+    generic.need_ytdlp()
+    if dry:
+        return generic.run(url, quality, ".", dry=True)
+    outdir = Path(out).expanduser() if out else default_outdir()
+    outdir.mkdir(parents=True, exist_ok=True)
+    jid = jobs.job_id(url, quality)
+    job = {"id": jid, "url": url, "quality": quality, "engine": "ytdlp",
+           "dest": str(outdir), "title": url, "status": "downloading"}
+    jobs.save(job)
+    log("no template for this site, using yt-dlp (generic mode)")
+    code = generic.run(url, quality, outdir)
+    job["status"] = "done" if code == 0 else ("paused" if code == 130 else "failed")
+    jobs.save(job)
+    if code == 130:
+        log("\nstopped. Run the same command or `relink resume` to continue.")
+    return code
+
+
+def do_get(url, quality="best", server=None, out=None, dry=False, cookie=None, retries=None,
+           ytdlp=False):
+    tpl = None if ytdlp else find_template(url, load_templates())
     if not tpl:
-        raise ResolveError("no template matches this URL. Study the site with tools/probe.py "
-                           "and add a template in templates/")
+        return do_generic(url, quality, out, dry)
     eng = make_engine(tpl, cookie, retries)
     log(f"site: {tpl.name}")
     resolved = eng.resolve(tpl, url, server, quality)
@@ -97,7 +117,7 @@ def do_get(url, quality="best", server=None, out=None, dry=False, cookie=None, r
 
 
 def cmd_get(a):
-    return do_get(a.url, a.quality, a.server, a.out, a.dry, a.cookie, a.retries)
+    return do_get(a.url, a.quality, a.server, a.out, a.dry, a.cookie, a.retries, a.ytdlp)
 
 
 def cmd_servers(a):
@@ -129,11 +149,36 @@ def cmd_search(a):
     return 0
 
 
+def cmd_discover(a):
+    queries = list(a.query)
+    for t in a.title or []:
+        queries += discover.expand_title(t)
+    sites = list(a.site or [])
+    if a.urls:
+        sites += [ln.strip() for ln in Path(a.urls).expanduser().read_text(encoding="utf-8").splitlines()
+                  if ln.strip().startswith("http")]
+    sites = [s if "://" in s else "https://" + s for s in sites]
+    if not queries and not sites:
+        raise ResolveError("give something to search (a title or words) or sites with --site/--urls")
+    client = Client(timeout=25, retries=2, cookie=a.cookie)
+    res = discover.run(client, a.out, queries, sites, a.engine, a.top, a.probe_query, a.refresh, log)
+    fps = res["fingerprints"]
+    print(f"\n{len(fps)} sites studied, {sum(1 for f in fps if f.get('ok'))} reachable")
+    for fam, members in list(res["families"].items())[:8]:
+        print(f"  {fam}: {len(members)} site(s)")
+    print(f"bundle: {res['bundle']}  ({res['bundle'].stat().st_size // 1024} KB)")
+    print(f"report: {res['report']}\nSend me the bundle and I will write the templates.")
+    return 0
+
+
 def cmd_list(a):
     items = jobs.load_all()
     if not items:
         print("no jobs yet")
     for j in items:
+        if j.get("engine") == "ytdlp":
+            print(f"{j['id']}  {j['status']:<11} (yt-dlp) {j['url']}")
+            continue
         part = Path(j["dest"] + ".part")
         size = f"  {human(part.stat().st_size)} so far" if part.exists() else ""
         print(f"{j['id']}  {j['status']:<11} {Path(j['dest']).name}{size}")
@@ -147,7 +192,8 @@ def cmd_resume(a):
             continue
         log(f"--- resuming {Path(j['dest']).name}")
         try:
-            code |= do_get(j["url"], j["quality"], j.get("server"), j["dest"], cookie=a.cookie)
+            code |= do_get(j["url"], j["quality"], j.get("server"), j["dest"], cookie=a.cookie,
+                           ytdlp=j.get("engine") == "ytdlp")
         except (DownloadError, ResolveError, NetError) as e:
             log(f"failed: {e}")
             code = 1
@@ -167,6 +213,7 @@ def main(argv=None):
     g.add_argument("--dry", action="store_true", help="only print the direct link")
     g.add_argument("--cookie", help="e.g. 'cf_clearance=...' if the site shows a challenge")
     g.add_argument("--retries", type=int)
+    g.add_argument("--ytdlp", action="store_true", help="skip templates, use yt-dlp for this URL")
     g.set_defaults(fn=cmd_get)
 
     s = sub.add_parser("servers", help="list the servers of a page")
@@ -180,6 +227,20 @@ def main(argv=None):
     q.add_argument("--base", help="site origin, e.g. https://cima.my-cima.net")
     q.add_argument("--cookie")
     q.set_defaults(fn=cmd_search)
+
+    d = sub.add_parser("discover", help="find and study sites so templates can be written")
+    d.add_argument("query", nargs="*", help="search words, e.g. 'watch series online free'")
+    d.add_argument("--title", action="append", help="a title; expands to several queries "
+                   "(English and Arabic). Repeat it for more titles")
+    d.add_argument("--site", action="append", help="study this site, no search (repeatable)")
+    d.add_argument("--urls", help="text file with one site URL per line")
+    d.add_argument("--engine", choices=["both", "ddg", "bing"], default="both")
+    d.add_argument("--top", type=int, default=6, help="sites to sample pages from (default 6)")
+    d.add_argument("--probe-query", default="love", help="word used to test each site's search")
+    d.add_argument("--out", default="relink-discover", help="work folder (default relink-discover)")
+    d.add_argument("--refresh", action="store_true", help="study again, ignore saved results")
+    d.add_argument("--cookie")
+    d.set_defaults(fn=cmd_discover)
 
     sub.add_parser("list", help="show jobs").set_defaults(fn=cmd_list)
     r = sub.add_parser("resume", help="continue unfinished jobs")

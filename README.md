@@ -34,7 +34,7 @@ drops, it fetches a fresh link and **continues from where it stopped**.
    the template again for a fresh link and continues from the same byte.
 4. Job state is saved in `~/.relink/jobs`, so `relink resume` continues after a reboot.
 
-No yt-dlp or aria2 needed so far: only Python and PyYAML.
+Templates need only Python and PyYAML. yt-dlp is optional (generic mode).
 
 ## Install (Termux)
 
@@ -59,6 +59,36 @@ relink resume                             # continue unfinished jobs
 
 If a site shows a Cloudflare challenge, pass the browser's cookie: `--cookie "cf_clearance=..."`.
 
+## Generic mode (yt-dlp fallback)
+
+If no template matches a URL, relink hands it to yt-dlp, with settings for a bad connection
+(continue `.part` files, retry forever). Same commands, same `relink list` / `resume`:
+
+```bash
+pip install yt-dlp && pkg install -y ffmpeg      # once
+relink get https://www.youtube.com/watch?v=...   # no template: uses yt-dlp
+relink get <url> --ytdlp                         # force yt-dlp even if a template matches
+```
+
+## Finding more sites: `relink discover`
+
+Search for sites, study each one, group the clones, and pack a small bundle to send back
+so templates can be written without browsing by hand:
+
+```bash
+relink discover --title "The Mentalist" --title "Breaking Bad"   # 5 queries per title (EN + AR)
+relink discover "مشاهدة مسلسلات مترجمة اون لاين"                   # or your own words
+relink discover --site https://some-site.tv --urls sites.txt     # skip search, study these
+```
+
+It searches DuckDuckGo then Bing (no key; Google blocks scripts), fingerprints every site
+(CMS and theme, search form, watch/download links, embed hosts, Cloudflare) and groups sites
+with the same theme into a **family**: one template usually covers the whole family.
+For the best sites it saves trimmed sample pages (home, search, watch, download) into
+`relink-discover/relink-discover.tar.gz` (usually well under 100 KB) with `report.md`.
+Results are saved after each site, so re-running continues where it stopped.
+If the search engines refuse your network, pass sites with `--site` / `--urls`.
+
 ## Studying a new site
 
 `tools/probe.py` fetches one page and prints its structure (iframes, forms with hidden
@@ -73,8 +103,10 @@ Then write the steps in `templates/<site>.yml`. `templates/mycima.yml` is the wo
 - [x] Offline test with a fake site (cut connection, expired link): `python -m unittest discover -s tests`
 - [ ] Prove the chain on the real site (needs a run on a connection that reaches it)
 - [ ] Series mode: all episodes of a season, next-episode following
+- [x] Generic mode: yt-dlp fallback when no template matches
+- [x] `relink discover`: search, fingerprint, group into families, bundle samples
 - [ ] Adapters for the other hosts (mixdrop, abstream, minochinos, hgcloud, bysebuho)
-- [ ] Site analyzer that drafts a template from a link
+- [ ] Site analyzer that drafts a template from a family's bundle
 
 ## Notes
 
