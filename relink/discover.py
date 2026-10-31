@@ -37,7 +37,7 @@ EXCLUDE = {
     "zhihu.com", "yahoo.co.jp", "zoominfo.com", "rocketreach.co", "brainyquote.com",
     "goodreads.com", "tumblr.com", "wordpress.com", "blogspot.com", "quora.com", "baidu.com",
     "yandex.com", "naver.com", "ebay.com", "alibaba.com", "tripadvisor.com", "cnn.com",
-    "bbc.com", "nytimes.com", "variety.com", "deadline.com", "ign.com", "metacritic.com",
+    "osnplus.com", "justwatch.com", "shahid.net", "starzplay.com", "bbc.com", "nytimes.com", "variety.com", "deadline.com", "ign.com", "metacritic.com",
 }
 
 # domains that show up in iframes/scripts but are never the video host
@@ -131,13 +131,44 @@ def parse_bing(html):
     return out
 
 
-def search_engine(client, query, engine="both"):
+def parse_google(html):
+    """Result links from Google's basic (no-JS) page: /url?q=<real url>&sa=...  Also plain hrefs."""
+    out = []
+    for m in re.finditer(r'href="/url\?q=([^"&]+)', html):
+        out.append(unquote(m.group(1)))
+    if not out:
+        out = re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*data-ved', html)
+    return [u for u in out if u.startswith("http") and "google." not in host_of(u)]
+
+
+def urls_from_text(text):
+    """Every URL in pasted text (a copied Google results page, a list, a saved page).
+    Cut-off URLs ending in … or ... are reduced to their site root."""
+    found, seen = [], set()
+    for m in re.finditer(r"https?://[^\s\"'<>\)\]]+", text):
+        u = m.group(0)
+        cut = u.endswith(("…", "..."))
+        u = u.rstrip("…").rstrip(".,;:!؟،")
+        if cut:
+            sp = urlsplit(u)
+            u = f"{sp.scheme}://{sp.netloc}/"
+        if u not in seen and not excluded(u):
+            seen.add(u)
+            found.append(u)
+    return found
+
+
+def search_engine(client, query, engine="all"):
     """URLs found for one query. With "both", DuckDuckGo and Bing results are merged."""
-    order = {"ddg": ["ddg"], "bing": ["bing"], "both": ["ddg", "bing"]}[engine]
+    order = {"google": ["google"], "ddg": ["ddg"], "bing": ["bing"], "both": ["ddg", "bing"],
+             "all": ["google", "ddg", "bing"]}[engine]
     found = []
     for name in order:
         try:
-            if name == "ddg":
+            if name == "google":
+                r = client.request("https://www.google.com/search?gbv=1&num=20&hl=ar&q=" + quote(query))
+                got = parse_google(r.text)
+            elif name == "ddg":
                 r = client.request("https://html.duckduckgo.com/html/", data="q=" + quote(query))
                 got = parse_ddg(r.text)
             else:
@@ -160,7 +191,7 @@ def expand_title(title):
     ]
 
 
-def candidates_from_search(client, queries, engine="both", log=print, pause=2.0):
+def candidates_from_search(client, queries, engine="all", log=print, pause=2.0):
     """Unique site origins in the order they were found, with how many queries hit each."""
     seen = {}
     for q in queries:
@@ -360,7 +391,14 @@ def sample_pages(client, fp, query, log=print):
         else:
             sep = "&" if "?" in s["action"] else "?"
             grab("search", f"{s['action']}{sep}{s['param']}={quote(query)}")
-    watch = fp.get("sample_watch") or []
+    watch = list(fp.get("sample_watch") or [])
+    ex = fp.get("example") or ""
+    ex_r = None
+    if ex and urlsplit(ex).path not in ("", "/") and ex.rstrip("/") != base.rstrip("/"):
+        ex_r = grab("result", ex)
+        if ex_r is not None:
+            w2, _ = classify_links(ex_r.text, ex_r.url)
+            watch = w2 + watch
     # prefer a deeper path (an episode or movie page) over a category page
     watch = sorted(watch, key=lambda w: -urlsplit(w["url"]).path.count("/"))
     r = grab("watch", watch[0]["url"]) if watch else None
@@ -369,6 +407,8 @@ def sample_pages(client, fp, query, log=print):
         dl = [d for d in dl if d["same_site"]] or dl
         if dl:
             grab("download", dl[0]["url"])
+    elif ex_r is not None and classify_links(ex_r.text, ex_r.url)[1]:
+        grab("download", classify_links(ex_r.text, ex_r.url)[1][0]["url"])
     elif fp.get("sample_download"):
         grab("download", fp["sample_download"][0]["url"])
     return pages
@@ -419,7 +459,7 @@ def write_bundle(outdir, report_path, site_pages):
 
 # ---------------------------------------------------------------- the whole pipeline
 
-def run(client, outdir, queries=(), sites=(), engine="both", top=6, query="love",
+def run(client, outdir, queries=(), sites=(), engine="all", top=6, query="love",
         refresh=False, log=print, pause=2.0):
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
@@ -431,15 +471,21 @@ def run(client, outdir, queries=(), sites=(), engine="both", top=6, query="love"
         except ValueError:
             state = {}
 
-    cands = [{"origin": o.rstrip("/"), "hits": 0, "example": o} for o in sites]
+    cands = []
+    for u in sites:
+        sp = urlsplit(u)
+        cands.append({"origin": f"{sp.scheme}://{sp.netloc}", "hits": 0, "example": u})
     if queries:
         log(f"searching ({engine}) ...")
         cands += candidates_from_search(client, list(queries), engine, log, pause)
-    seen, uniq = set(), []
+    by, uniq = {}, []
     for c in cands:
-        if c["origin"] not in seen:
-            seen.add(c["origin"])
+        old = by.get(c["origin"])
+        if old is None:
+            by[c["origin"]] = c
             uniq.append(c)
+        elif urlsplit(c["example"]).path.count("/") > urlsplit(old["example"]).path.count("/"):
+            old["example"] = c["example"]
     if not uniq:
         raise NetError("no sites to study. The search engines gave nothing (they may block this "
                        "network): pass sites yourself with --site https://example.com or --urls FILE")
@@ -451,6 +497,7 @@ def run(client, outdir, queries=(), sites=(), engine="both", top=6, query="love"
         log(f"[{i}/{len(uniq)}] studying {site_key(c['origin'])}")
         fp = fingerprint(client, c["origin"])
         fp["hits"] = c["hits"]
+        fp["example"] = c["example"]
         state[c["origin"]] = fp
         state_path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 

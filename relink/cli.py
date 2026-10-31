@@ -155,8 +155,9 @@ def cmd_discover(a):
         queries += discover.expand_title(t)
     sites = list(a.site or [])
     if a.urls:
-        sites += [ln.strip() for ln in Path(a.urls).expanduser().read_text(encoding="utf-8").splitlines()
-                  if ln.strip().startswith("http")]
+        # any text works: a copied Google results page, a saved page, one URL per line
+        sites += discover.urls_from_text(Path(a.urls).expanduser().read_text(encoding="utf-8",
+                                                                             errors="replace"))
     sites = [s if "://" in s else "https://" + s for s in sites]
     if not queries and not sites:
         raise ResolveError("give something to search (a title or words) or sites with --site/--urls")
@@ -233,8 +234,8 @@ def main(argv=None):
     d.add_argument("--title", action="append", help="a title; expands to several queries "
                    "(English and Arabic). Repeat it for more titles")
     d.add_argument("--site", action="append", help="study this site, no search (repeatable)")
-    d.add_argument("--urls", help="text file with one site URL per line")
-    d.add_argument("--engine", choices=["both", "ddg", "bing"], default="both")
+    d.add_argument("--urls", help="text file with URLs, or any text that contains them (a copied Google results page)")
+    d.add_argument("--engine", choices=["all", "google", "ddg", "bing", "both"], default="all")
     d.add_argument("--top", type=int, default=6, help="sites to sample pages from (default 6)")
     d.add_argument("--probe-query", default="love", help="word used to test each site's search")
     d.add_argument("--out", default="relink-discover", help="work folder (default relink-discover)")

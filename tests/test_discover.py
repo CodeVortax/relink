@@ -109,6 +109,20 @@ class Parsers(unittest.TestCase):
         html = '<iframe src="https://www.google.com/maps"></iframe><iframe src="https://voe.sx/e/1">'
         self.assertEqual(discover.embed_hosts(html), ["voe.sx"])
 
+    def test_pasted_google_text(self):
+        text = ("سيما وبس\nhttps://vid.mycima.cc\nhttps://vid.mycima.cc/tag.php?t=مسلسل-the-mentalis...\n"
+                "ايجي ديد\nhttps://tv10.egydead.live\nPrime Video\nhttps://www.primevideo.com\n"
+                "https://topcinemaa.vip\nhttps://tv10.egydead.live/")
+        urls = discover.urls_from_text(text)
+        self.assertEqual(urls, ["https://vid.mycima.cc", "https://vid.mycima.cc/",
+                                "https://tv10.egydead.live", "https://topcinemaa.vip",
+                                "https://tv10.egydead.live/"])
+
+    def test_google_basic_html(self):
+        html = ('<a href="/url?q=https://cima-time.com/series/x&amp;sa=U&amp;ved=1">x</a>'
+                '<a href="/url?q=https://www.google.com/maps&amp;sa=U">m</a>')
+        self.assertEqual(discover.parse_google(html), ["https://cima-time.com/series/x"])
+
     def test_expand_title(self):
         qs = discover.expand_title("The Mentalist")
         self.assertEqual(len(qs), 5)
@@ -163,6 +177,13 @@ class Discovery(unittest.TestCase):
             info = json.load(tar.extractfile(f"{key}/info.json"))
             self.assertEqual(info["family"], "wordpress:cimaclub")
         self.assertLess(res["bundle"].stat().st_size, 20000)
+
+    def test_result_page_from_search_is_sampled(self):
+        out = Path(self.tmp) / "d"
+        res = discover.run(Client(retries=1, timeout=5), out,
+                           sites=[self.o1 + "/series/the-mentalist-s03e17/"], log=lambda m: None)
+        with tarfile.open(res["bundle"]) as tar:
+            self.assertIn(f"{discover.site_key(self.o1)}/result.html", tar.getnames())
 
     def test_second_run_continues_from_saved_results(self):
         out = Path(self.tmp) / "d"
