@@ -1,7 +1,6 @@
 """Offline tests for generic mode (yt-dlp fallback) and site discovery.
 Run:  python -m unittest discover -s tests -v
 """
-import base64
 import json
 import os
 import stat
@@ -12,7 +11,6 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -72,20 +70,6 @@ def start_site(theme="cimaclub"):
 
 
 class Parsers(unittest.TestCase):
-    def test_ddg(self):
-        html = ('<a class="result__a" rel="nofollow" href="//duckduckgo.com/l/?uddg='
-                + quote("https://site-one.tv/watch/x", safe="") + '&amp;rut=1">One</a>'
-                '<a class="other" href="https://nope.com">no</a>')
-        self.assertEqual(discover.parse_ddg(html), ["https://site-one.tv/watch/x"])
-
-    def test_bing_wrapped_and_plain(self):
-        real = "https://site-two.tv/movie/y"
-        u = "a1" + base64.urlsafe_b64encode(real.encode()).decode().rstrip("=")
-        html = (f'<ol><li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&amp;p=1&amp;u={u}'
-                f'&amp;ntb=1">T</a></h2></li>'
-                '<li class="b_algo"><h2><a href="https://plain.example/z">P</a></h2></li></ol>')
-        self.assertEqual(discover.parse_bing(html), [real, "https://plain.example/z"])
-
     def test_exclude(self):
         self.assertTrue(discover.excluded("https://en.wikipedia.org/wiki/X"))
         self.assertTrue(discover.excluded("https://www.imdb.com/title/tt1"))
@@ -117,11 +101,6 @@ class Parsers(unittest.TestCase):
         self.assertEqual(urls, ["https://vid.mycima.cc", "https://vid.mycima.cc/",
                                 "https://tv10.egydead.live", "https://topcinemaa.vip",
                                 "https://tv10.egydead.live/"])
-
-    def test_google_basic_html(self):
-        html = ('<a href="/url?q=https://cima-time.com/series/x&amp;sa=U&amp;ved=1">x</a>'
-                '<a href="/url?q=https://www.google.com/maps&amp;sa=U">m</a>')
-        self.assertEqual(discover.parse_google(html), ["https://cima-time.com/series/x"])
 
     def test_expand_title(self):
         qs = discover.expand_title("The Mentalist")

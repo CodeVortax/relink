@@ -70,6 +70,23 @@ relink get https://www.youtube.com/watch?v=...   # no template: uses yt-dlp
 relink get <url> --ytdlp                         # force yt-dlp even if a template matches
 ```
 
+## Web search API: `relink web`
+
+One call over Google (basic no-JS page), DuckDuckGo, Bing, Brave and Mojeek. No API keys.
+Results are merged (a page several engines return ranks higher) and the report says which
+engine failed and why (captcha, timeout, page changed), so one blocked engine never hides the rest.
+
+```bash
+relink web the mentalist s01e01                      # google + ddg + bing
+relink web -e google -e mojeek --lang ar --region eg مسلسل ذا مينتاليست
+relink web --pages 2 --limit 20 --json some query   # JSON for scripts
+relink web --serve --port 8765                       # local API: curl 'localhost:8765/search?q=...&engines=google,ddg'
+```
+
+From Python: `from relink.search_api import search; search("query", ["google", "bing"], lang="ar")`.
+Engines change their pages and block scripts now and then: each has its own parser plus a
+generic fallback, but expect Google in particular to refuse some networks.
+
 ## Finding more sites: `relink discover`
 
 Search for sites, study each one, group the clones, and pack a small bundle to send back
@@ -81,7 +98,7 @@ relink discover "مشاهدة مسلسلات مترجمة اون لاين"      
 relink discover --site https://some-site.tv --urls sites.txt     # skip search, study these
 ```
 
-It searches DuckDuckGo then Bing (no key; Google blocks scripts), fingerprints every site
+It searches with the web API above (Google, DuckDuckGo, Bing; `--engine` picks), fingerprints every site
 (CMS and theme, search form, watch/download links, embed hosts, Cloudflare) and groups sites
 with the same theme into a **family**: one template usually covers the whole family.
 For the best sites it saves trimmed sample pages (home, search, watch, download) into

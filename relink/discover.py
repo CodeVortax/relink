@@ -13,7 +13,6 @@ Pipeline (`relink discover`):
 Standard library only. Results are saved after every site, so a dropped connection
 costs nothing: run the same command again and it continues.
 """
-import base64
 import io
 import json
 import re
@@ -23,6 +22,7 @@ from html import unescape
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 
+from . import search_api
 from .net import Blocked, NetError
 
 # not streaming sites: never worth a template
@@ -90,57 +90,6 @@ def _attr(tag, name):
     return unescape(m.group(1) if m.group(1) is not None else m.group(2))
 
 
-def parse_ddg(html):
-    """Result links from html.duckduckgo.com/html. They are wrapped as /l/?uddg=<real url>."""
-    out = []
-    for m in re.finditer(r"<a\b[^>]*>", html, re.I):
-        tag = m.group(0)
-        if "result__a" not in _attr(tag, "class"):
-            continue
-        href = _attr(tag, "href")
-        if "uddg=" in href:
-            href = unquote(parse_qs(urlsplit(href).query).get("uddg", [""])[0])
-        elif href.startswith("//"):
-            href = "https:" + href
-        if href.startswith("http"):
-            out.append(href)
-    return out
-
-
-def _bing_unwrap(href):
-    """Bing wraps results as /ck/a?...&u=a1<base64url of the real url>."""
-    if "/ck/a" in href:
-        u = parse_qs(urlsplit(href).query).get("u", [""])[0]
-        if u.startswith("a1"):
-            raw = u[2:]
-            try:
-                return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8")
-            except (ValueError, UnicodeDecodeError):
-                return ""
-    return href
-
-
-def parse_bing(html):
-    out = []
-    for blk in re.findall(r'<li\b[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', html, re.S | re.I):
-        m = re.search(r"<a\b[^>]*>", blk, re.I)
-        if m:
-            href = _bing_unwrap(_attr(m.group(0), "href"))
-            if href.startswith("http"):
-                out.append(href)
-    return out
-
-
-def parse_google(html):
-    """Result links from Google's basic (no-JS) page: /url?q=<real url>&sa=...  Also plain hrefs."""
-    out = []
-    for m in re.finditer(r'href="/url\?q=([^"&]+)', html):
-        out.append(unquote(m.group(1)))
-    if not out:
-        out = re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*data-ved', html)
-    return [u for u in out if u.startswith("http") and "google." not in host_of(u)]
-
-
 def urls_from_text(text):
     """Every URL in pasted text (a copied Google results page, a list, a saved page).
     Cut-off URLs ending in … or ... are reduced to their site root."""
@@ -158,28 +107,6 @@ def urls_from_text(text):
     return found
 
 
-def search_engine(client, query, engine="all"):
-    """URLs found for one query. With "both", DuckDuckGo and Bing results are merged."""
-    order = {"google": ["google"], "ddg": ["ddg"], "bing": ["bing"], "both": ["ddg", "bing"],
-             "all": ["google", "ddg", "bing"]}[engine]
-    found = []
-    for name in order:
-        try:
-            if name == "google":
-                r = client.request("https://www.google.com/search?gbv=1&num=20&hl=ar&q=" + quote(query))
-                got = parse_google(r.text)
-            elif name == "ddg":
-                r = client.request("https://html.duckduckgo.com/html/", data="q=" + quote(query))
-                got = parse_ddg(r.text)
-            else:
-                r = client.request("https://www.bing.com/search?q=" + quote(query) + "&count=30")
-                got = parse_bing(r.text)
-        except (NetError, Blocked):
-            got = []
-        found += [u for u in got if u not in found]
-    return found
-
-
 def expand_title(title):
     """One title -> queries that surface episode/streaming sites rather than articles."""
     return [
@@ -193,11 +120,14 @@ def expand_title(title):
 
 def candidates_from_search(client, queries, engine="all", log=print, pause=2.0):
     """Unique site origins in the order they were found, with how many queries hit each."""
+    engines = {"all": search_api.DEFAULT, "both": ("ddg", "bing")}.get(engine, (engine,))
     seen = {}
     for q in queries:
-        urls = search_engine(client, q, engine)
-        log(f"  search: {q!r} -> {len(urls)} results")
-        for u in urls:
+        out = search_api.search(q, engines, pause=0.5)
+        bad = [f"{n}: {r['error']}" for n, r in out["engines"].items() if not r["ok"]]
+        log(f"  search: {q!r} -> {len(out['results'])} results" + (f"  [{'; '.join(bad)}]" if bad else ""))
+        for r in out["results"]:
+            u = r["url"]
             if excluded(u):
                 continue
             sp = urlsplit(u)

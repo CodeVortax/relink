@@ -1,9 +1,10 @@
 """relink command line."""
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from . import __version__, discover, generic, jobs
+from . import __version__, discover, generic, jobs, search_api
 from .download import DownloadError, download, human
 from .engine import Engine, ResolveError, TemplateError, find_template, load_templates
 from .net import Blocked, Client, NetError
@@ -149,6 +150,35 @@ def cmd_search(a):
     return 0
 
 
+def cmd_web(a):
+    if a.serve:
+        srv = search_api.make_server(a.port)
+        log(f"search API on http://127.0.0.1:{a.port}/search?q=...  (Ctrl-C to stop)")
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            log("\nstopped")
+        return 0
+    if not a.query:
+        raise ResolveError("give a query, or use --serve")
+    out = search_api.search(" ".join(a.query), a.engine or search_api.DEFAULT, a.pages,
+                            a.lang, a.region, a.limit)
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0
+    for i, r in enumerate(out["results"], 1):
+        # the title gets its own line so a right-to-left title is never mixed with the URL
+        print(f"{i}. {r['title']}\n   {r['url']}  [{','.join(r['engines'])}]")
+        if r["snippet"] and not a.short:
+            print(f"   {r['snippet']}")
+    for name, st in out["engines"].items():
+        if not st["ok"]:
+            log(f"{name}: {st['error']}")
+    if not out["results"]:
+        print("no results")
+    return 0 if out["results"] else 1
+
+
 def cmd_discover(a):
     queries = list(a.query)
     for t in a.title or []:
@@ -229,13 +259,27 @@ def main(argv=None):
     q.add_argument("--cookie")
     q.set_defaults(fn=cmd_search)
 
+    w = sub.add_parser("web", help="search the web (google, ddg, bing, brave, mojeek), merged")
+    w.add_argument("query", nargs="*")
+    w.add_argument("--engine", "-e", action="append", choices=list(search_api.ENGINES),
+                   help="repeat to pick engines (default: google ddg bing)")
+    w.add_argument("--pages", type=int, default=1)
+    w.add_argument("--lang", help="e.g. ar, en")
+    w.add_argument("--region", help="e.g. eg, us")
+    w.add_argument("--limit", type=int)
+    w.add_argument("--json", action="store_true")
+    w.add_argument("--short", action="store_true", help="titles and links only")
+    w.add_argument("--serve", action="store_true", help="run a local JSON API instead")
+    w.add_argument("--port", type=int, default=8765)
+    w.set_defaults(fn=cmd_web)
+
     d = sub.add_parser("discover", help="find and study sites so templates can be written")
     d.add_argument("query", nargs="*", help="search words, e.g. 'watch series online free'")
     d.add_argument("--title", action="append", help="a title; expands to several queries "
                    "(English and Arabic). Repeat it for more titles")
     d.add_argument("--site", action="append", help="study this site, no search (repeatable)")
     d.add_argument("--urls", help="text file with URLs, or any text that contains them (a copied Google results page)")
-    d.add_argument("--engine", choices=["all", "google", "ddg", "bing", "both"], default="all")
+    d.add_argument("--engine", choices=["all", "google", "ddg", "bing", "brave", "mojeek", "both"], default="all")
     d.add_argument("--top", type=int, default=6, help="sites to sample pages from (default 6)")
     d.add_argument("--probe-query", default="love", help="word used to test each site's search")
     d.add_argument("--out", default="relink-discover", help="work folder (default relink-discover)")
