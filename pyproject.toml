@@ -9,6 +9,7 @@ description = "Download from sites that only give temporary links: template-driv
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = ["pyyaml"]
+license = { text = "AGPL-3.0-only" }
 
 [project.optional-dependencies]
 generic = ["yt-dlp"]
