@@ -128,3 +128,7 @@ Then write the steps in `templates/<site>.yml`. `templates/mycima.yml` is the wo
 ## Notes
 
 Only download content you have the right to download, and respect each site's terms.
+
+## License
+
+AGPL-3.0-only. See [LICENSE](LICENSE).
